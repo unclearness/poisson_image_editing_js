@@ -1,0 +1,426 @@
+<!doctype html>
+<html lang="ja">
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Seamless Clone (Poisson) – GS / CG 切替版</title>
+  <style>
+    :root {
+      --bg: #0b0d10;
+      --fg: #e8eaed;
+      --card: #111318;
+      --muted: #94a3b8;
+      --acc: #38bdf8;
+    }
+
+    html,
+    body {
+      margin: 0;
+      height: 100%;
+      background: var(--bg);
+      color: var(--fg);
+      font: 14px/1.5 system-ui, -apple-system, Segoe UI, Roboto, "Noto Sans JP";
+    }
+
+    .wrap {
+      display: grid;
+      grid-template-columns: 340px 1fr;
+      gap: 16px;
+      height: 100%;
+      padding: 16px;
+      box-sizing: border-box;
+    }
+
+    .panel {
+      background: var(--card);
+      border-radius: 14px;
+      padding: 14px;
+      overflow: auto;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, .3);
+    }
+
+    h2 {
+      margin: 8px 0;
+      font-size: 15px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: .08em;
+    }
+
+    label {
+      display: block;
+      margin: 8px 0 6px;
+      color: var(--muted);
+    }
+
+    input[type=file],
+    input[type=number],
+    select {
+      width: 100%;
+    }
+
+    .row {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    .grid2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    button {
+      background: var(--acc);
+      color: #07202a;
+      border: 0;
+      border-radius: 10px;
+      padding: 10px 12px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    button:disabled {
+      opacity: .5;
+      cursor: not-allowed;
+    }
+
+    canvas {
+      background: #000;
+      width: 100%;
+      height: auto;
+      border-radius: 10px;
+      image-rendering: crisp-edges;
+    }
+
+    .hint {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .thumbs {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 8px;
+    }
+
+    .thumbs .box {
+      background: #0c0f13;
+      border: 1px solid #1f2937;
+      border-radius: 10px;
+      padding: 8px;
+    }
+
+    .mono {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Noto Sans Mono";
+    }
+
+    .err {
+      color: #fca5a5;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="wrap">
+    <div class="panel" id="controls">
+      <h1 style="margin:0 0 6px; font-size:18px;">Seamless Clone (Poisson)</h1>
+
+      <h2>Inputs</h2>
+      <!-- <div class="hint">初期状態で <code>data/destination.png</code> / <code>data/source.png</code> / <code>data/mask.png</code> を読み込みます（同ディレクトリに <code>data/</code> を配置）。</div> -->
+      <label>Destination (背景)</label>
+      <input id="fileDst" type="file" accept="image/*" />
+      <label>Source (貼り付け)</label>
+      <input id="fileSrc" type="file" accept="image/*" />
+      <label>Mask (白=ブレンド / 黒=外)</label>
+      <input id="fileMask" type="file" accept="image/*" />
+
+      <div class="thumbs" style="margin-top:8px;">
+        <div class="box">
+          <div class="hint">Destination</div><canvas id="prevDst" width="0" height="0"></canvas>
+        </div>
+        <div class="box">
+          <div class="hint">Source</div><canvas id="prevSrc" width="0" height="0"></canvas>
+        </div>
+        <div class="box">
+          <div class="hint">Mask</div><canvas id="prevMask" width="0" height="0"></canvas>
+        </div>
+      </div>
+
+      <h2>Placement</h2>
+      <div class="grid2">
+        <div>
+          <label>topx <span class="hint">(右+ / 左−)</span></label>
+          <input id="topx" type="number" value="-35" step="1" class="mono" />
+        </div>
+        <div>
+          <label>topy <span class="hint">(下+ / 上−)</span></label>
+          <input id="topy" type="number" value="35" step="1" class="mono" />
+        </div>
+      </div>
+      <div class="row" style="margin-top:6px;">
+        <input id="showOverlay" type="checkbox" checked /> <span class="hint">プレビューにマスク(赤)を重ねる</span>
+      </div>
+
+      <h2>Solver</h2>
+      <div class="grid2">
+        <div>
+          <label>Method</label>
+          <select id="method">
+            <option value="copy">Copy-Paste (no blending)</option>
+            <option value="gs">Gauss–Seidel (GS)</option>
+            <option value="cg" selected>Conjugate Gradient (CG)</option>
+          </select>
+        </div>
+        <div>
+          <label>Iterations / MaxIter</label>
+          <input id="iter" type="number" value="800" min="1" step="50" class="mono" />
+        </div>
+      </div>
+      <div class="grid2">
+        <div>
+          <label>CG tolerance</label>
+          <input id="tol" type="number" value="0.01" step="0.001" class="mono" />
+        </div>
+        <div>
+          <label>Guidance</label>
+          <select id="guidance">
+            <option value="lap" selected>Source Laplacian</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="row" style="margin-top:10px; gap:8px;">
+        <button id="btnRun" disabled>Run</button>
+        <button id="btnSave" disabled>Save PNG</button>
+        <span id="status" class="hint"></span>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Preview / Result</h2>
+      <canvas id="canvas" width="0" height="0"></canvas>
+      <p class="hint">Run 前は Destination 上に Source と Mask(赤) を (topx, topy) で重ねて表示。Run 後はブレンド結果を表示します。</p>
+    </div>
+  </div>
+
+  <script>
+    // ===== Utilities =====
+    const $ = (id) => document.getElementById(id);
+    const canvas = $("canvas");
+    const ctxOut = canvas.getContext('2d');
+    const cPrevDst = $("prevDst").getContext('2d');
+    const cPrevSrc = $("prevSrc").getContext('2d');
+    const cPrevMask = $("prevMask").getContext('2d');
+
+    let dstID = null, srcID = null, maskID = null; // ImageData
+
+    function loadImageURL(url) {
+      return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.onload = () => resolve(img);
+        img.onerror = () => reject(new Error('Failed to load ' + url));
+        img.src = url;
+      });
+    }
+    function loadImageFile(file) {
+      return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = () => reject(new Error('Failed to load local file: ' + file.name));
+        img.src = URL.createObjectURL(file);
+      });
+    }
+    function imageToImageData(img) {
+      const c = document.createElement('canvas');
+      c.width = img.naturalWidth; c.height = img.naturalHeight;
+      const x = c.getContext('2d'); x.drawImage(img, 0, 0); return x.getImageData(0, 0, c.width, c.height);
+    }
+    function refreshThumb(ctx, id) {
+      if (!id) { ctx.canvas.width = 0; ctx.canvas.height = 0; return; }
+      const s = 150, r = Math.min(s / id.width, s / id.height); const w = Math.max(1, Math.round(id.width * r)), h = Math.max(1, Math.round(id.height * r));
+      ctx.canvas.width = w; ctx.canvas.height = h; const tmp = document.createElement('canvas'); tmp.width = id.width; tmp.height = id.height; tmp.getContext('2d').putImageData(id, 0, 0); ctx.drawImage(tmp, 0, 0, w, h);
+    }
+    function imageDataToCanvas(id) { const c = document.createElement('canvas'); c.width = id.width; c.height = id.height; c.getContext('2d').putImageData(id, 0, 0); return c; }
+    function fileListFrom(file) { const dt = new DataTransfer(); dt.items.add(file); return dt.files; }
+
+    // ===== Mask & arrays =====
+    function bwMaskAt(data, x, y) { const w = data.width, h = data.height; if (x < 0 || y < 0 || x >= w || y >= h) return 0; const i = (y * w + x) * 4; const r = data.data[i], g = data.data[i + 1], b = data.data[i + 2]; const lum = 0.299 * r + 0.587 * g + 0.114 * b; return lum > 127 ? 1 : 0; }
+
+    function buildAlignedArrays(topx, topy) {
+      const w = dstID.width, h = dstID.height, n = w * h; const mask = new Uint8Array(n);
+      const D = { R: new Float64Array(n), G: new Float64Array(n), B: new Float64Array(n) };
+      const S = { R: new Float64Array(n), G: new Float64Array(n), B: new Float64Array(n) };
+      const d = dstID.data, s = srcID.data;
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          const p = y * w + x, i = p * 4; D.R[p] = d[i]; D.G[p] = d[i + 1]; D.B[p] = d[i + 2];
+          const sx = x - topx, sy = y - topy;
+          if (sx >= 0 && sy >= 0 && sx < srcID.width && sy < srcID.height) {
+            const si = (sy * srcID.width + sx) * 4; S.R[p] = s[si]; S.G[p] = s[si + 1]; S.B[p] = s[si + 2];
+            mask[p] = bwMaskAt(maskID, sx, sy);
+          } else { S.R[p] = D.R[p]; S.G[p] = D.G[p]; S.B[p] = D.B[p]; mask[p] = 0; }
+        }
+      }
+      return { w, h, mask, D, S };
+    }
+
+    // ===== GS Solver (existing) =====
+    function laplaceOfSrc(p, w, h, S) { const x = p % w, y = (p - x) / w; const c = S[p]; const L = x > 0 ? S[p - 1] : c, R = x < w - 1 ? S[p + 1] : c, U = y > 0 ? S[p - w] : c, D = y < h - 1 ? S[p + w] : c; return 4 * c - (L + R + U + D); }
+    function solveChannelGS({ mask, D, S, w, h, iters }) { const f = new Float64Array(D); for (let it = 0; it < iters; it++) { for (let y = 0; y < h; y++) { for (let x = 0; x < w; x++) { const p = y * w + x; if (!mask[p]) continue; let sum = 0, cnt = 0; if (x > 0) { sum += mask[p - 1] ? f[p - 1] : D[p - 1]; cnt++; } if (x < w - 1) { sum += mask[p + 1] ? f[p + 1] : D[p + 1]; cnt++; } if (y > 0) { sum += mask[p - w] ? f[p - w] : D[p - w]; cnt++; } if (y < h - 1) { sum += mask[p + w] ? f[p + w] : D[p + w]; cnt++; } const rhs = laplaceOfSrc(p, w, h, S); f[p] = (rhs + sum) / (cnt || 1); } } } return f; }
+
+    // ===== CG Solver (matrix-free) =====
+    function buildSystemForCG(mask, w, h, D, S) {
+      // Map global index -> compact id
+      const map = new Int32Array(w * h).fill(-1); const idx = [];
+      for (let p = 0, k = 0; p < w * h; p++) if (mask[p]) { map[p] = k++; idx.push(p); }
+      const m = idx.length;
+      // Precompute b and neighbor structure (count per p, and neighbor compact ids)
+      const b = new Float64Array(m);
+      const count = new Uint8Array(m);
+
+      function inBounds(x, y) { return x >= 0 && y >= 0 && x < w && y < h; }
+
+      for (let ii = 0; ii < m; ii++) {
+        const p = idx[ii]; const x = p % w, y = (p - x) / w; let c = 0; let bsum = laplaceOfSrc(p, w, h, S);
+        // 4-neighborhood
+        const nbrs = [[x - 1, y], [x + 1, y], [x, y - 1], [x, y + 1]];
+        for (const [nx, ny] of nbrs) {
+          if (!inBounds(nx, ny)) continue; // out of image: not counted
+          c++;
+          const q = ny * w + nx;
+          if (map[q] === -1) { // outside mask -> move to b via D
+            bsum += D[q];
+          }
+        }
+        b[ii] = bsum; count[ii] = c;
+      }
+
+      function Amul(vec) { // A * vec (vec is compact masked vector)
+        const out = new Float64Array(m);
+        for (let ii = 0; ii < m; ii++) {
+          const p = idx[ii]; const x = p % w, y = (p - x) / w; let acc = count[ii] * vec[ii];
+          const nbrs = [[x - 1, y], [x + 1, y], [x, y - 1], [x, y + 1]];
+          for (const [nx, ny] of nbrs) {
+            if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue; // skip out of image
+            const q = ny * w + nx; const jj = map[q];
+            if (jj !== -1) { acc -= vec[jj]; }
+          }
+          out[ii] = acc;
+        }
+        return out;
+      }
+
+      return { map, idx, m, b, Amul };
+    }
+
+    function dot(a, b) { let s = 0; for (let i = 0; i < a.length; i++) s += a[i] * b[i]; return s; }
+    function axpy(y, a, x) { for (let i = 0; i < y.length; i++) y[i] += a * x[i]; }
+    function scal(y, a) { for (let i = 0; i < y.length; i++) y[i] *= a; }
+    function sub(a, b) { const r = new Float64Array(a.length); for (let i = 0; i < a.length; i++) r[i] = a[i] - b[i]; return r; }
+
+    function cgSolve(Amul, b, x0, maxIter, tol) {
+      let x = new Float64Array(x0); // copy
+      let r = sub(b, Amul(x));
+      let p = new Float64Array(r);
+      let rsold = dot(r, r);
+      const eps = Math.max(1e-12, tol * tol);
+      for (let k = 0; k < maxIter; k++) {
+        const Ap = Amul(p);
+        const denom = dot(p, Ap) || 1e-12;
+        const alpha = rsold / denom;
+        axpy(x, alpha, p); // x += a p
+        axpy(r, -alpha, Ap); // r -= a Ap
+        const rsnew = dot(r, r);
+        if (rsnew <= eps) break;
+        const beta = rsnew / rsold;
+        for (let i = 0; i < p.length; i++) p[i] = r[i] + beta * p[i];
+        rsold = rsnew;
+      }
+      return x;
+    }
+
+    function solveChannelCG({ mask, D, S, w, h, maxIter, tol }) {
+      const { map, idx, m, b, Amul } = buildSystemForCG(mask, w, h, D, S);
+      if (m === 0) return new Float64Array(D); // nothing to solve
+      // initial x: destination values on mask
+      const x0 = new Float64Array(m);
+      for (let ii = 0; ii < m; ii++) { x0[ii] = D[idx[ii]]; }
+      const x = cgSolve(Amul, b, x0, maxIter, Math.max(1e-6, tol));
+      // expand back to full image array f (start from destination)
+      const f = new Float64Array(D);
+      for (let ii = 0; ii < m; ii++) { f[idx[ii]] = x[ii]; }
+      return f;
+    }
+
+    // ===== Compose & Preview =====
+    function compose({ mask, fR, fG, fB, w, h }) { const out = ctxOut.createImageData(w, h); for (let p = 0, i = 0; p < w * h; p++, i += 4) { if (mask[p]) { out.data[i] = Math.max(0, Math.min(255, fR[p])); out.data[i + 1] = Math.max(0, Math.min(255, fG[p])); out.data[i + 2] = Math.max(0, Math.min(255, fB[p])); out.data[i + 3] = 255; } else { const di = p * 4; out.data[di] = dstID.data[di]; out.data[di + 1] = dstID.data[di + 1]; out.data[di + 2] = dstID.data[di + 2]; out.data[di + 3] = 255; } } return out; }
+
+    function drawOverlayPreview() { if (!dstID) { return; } const topx = parseInt($("topx").value || '0', 10), topy = parseInt($("topy").value || '0', 10); ctxOut.canvas.width = dstID.width; ctxOut.canvas.height = dstID.height; ctxOut.putImageData(dstID, 0, 0); if (srcID) { ctxOut.save(); ctxOut.globalAlpha = 0.75; ctxOut.drawImage(imageDataToCanvas(srcID), topx, topy); ctxOut.restore(); } if (maskID && $("showOverlay").checked) { const mc = imageDataToCanvas(maskID); ctxOut.save(); ctxOut.globalAlpha = 0.35; ctxOut.drawImage(mc, topx, topy); ctxOut.globalAlpha = 0.35; ctxOut.globalCompositeOperation = 'multiply'; ctxOut.fillStyle = 'red'; ctxOut.drawImage(mc, topx, topy); ctxOut.restore(); } }
+
+    // ===== File handling & boot =====
+    async function loadDefaults() { try { const d = await loadImageURL('data/destination.png'); const s = await loadImageURL('data/source.png'); const m = await loadImageURL('data/mask.png'); dstID = imageToImageData(d); srcID = imageToImageData(s); maskID = imageToImageData(m); setupAfterLoad(); } catch (e) { $("status").textContent = 'デフォルト画像の読み込みに失敗: ' + e.message + '（手動で選択してください）'; } }
+    async function handleFiles() { try { const df = $("fileDst").files[0]; const sf = $("fileSrc").files[0]; const mf = $("fileMask").files[0]; let changed = false; if (df) { const d = await loadImageFile(df); dstID = imageToImageData(d); changed = true; } if (sf) { const s = await loadImageFile(sf); srcID = imageToImageData(s); changed = true; } if (mf) { const m = await loadImageFile(mf); maskID = imageToImageData(m); changed = true; } if (!dstID) { $("btnRun").disabled = true; $("btnSave").disabled = true; $("status").textContent = 'Destination を選択してください'; return; } if (changed) { canvas.width = dstID.width; canvas.height = dstID.height; refreshThumb(cPrevDst, dstID); refreshThumb(cPrevSrc, srcID); refreshThumb(cPrevMask, maskID); drawOverlayPreview(); } $("btnRun").disabled = !(dstID && srcID && maskID); $("btnSave").disabled = true; const msg = []; if (dstID) msg.push(`dst ${dstID.width}×${dstID.height}`); if (srcID) msg.push(`src ${srcID.width}×${srcID.height}`); if (maskID) msg.push(`mask ${maskID.width}×${maskID.height}`); $("status").textContent = msg.join(' | '); } catch (e) { console.error(e); $("status").innerHTML = '<span class="err">ローカル画像の読み込みに失敗: ' + (e && e.message ? e.message : e) + '</span>'; } }
+    function setupAfterLoad() { if (!dstID) return; canvas.width = dstID.width; canvas.height = dstID.height; refreshThumb(cPrevDst, dstID); refreshThumb(cPrevSrc, srcID); refreshThumb(cPrevMask, maskID); drawOverlayPreview(); $("btnRun").disabled = !(dstID && srcID && maskID); $("btnSave").disabled = true; }
+
+    $("fileDst").addEventListener('change', handleFiles);
+    $("fileSrc").addEventListener('change', handleFiles);
+    $("fileMask").addEventListener('change', handleFiles);
+    $("topx").addEventListener('input', drawOverlayPreview);
+    $("topy").addEventListener('input', drawOverlayPreview);
+    $("showOverlay").addEventListener('change', drawOverlayPreview);
+
+    $("btnRun").addEventListener('click', () => {
+      try {
+        if (!(dstID && srcID && maskID)) return;
+        const topx = parseInt($("topx").value || '0', 10);
+        const topy = parseInt($("topy").value || '0', 10);
+        const maxIter = Math.max(1, parseInt($("iter").value || '800', 10));
+        const tol = parseFloat($("tol").value || '0.01');
+        const method = $("method").value; // 'gs' or 'cg'
+
+        const { w, h, mask, D, S } = buildAlignedArrays(topx, topy);
+        if (!mask.some(v => v)) { $("status").textContent = 'Mask is empty at given (topx,topy).'; return; }
+
+        const t0 = performance.now();
+        let fR, fG, fB;
+        if(method==='copy'){
+          // Simple copy-paste: output = destination, but inside mask copy source pixels directly
+          fR = new Float64Array(D.R);
+          fG = new Float64Array(D.G);
+          fB = new Float64Array(D.B);
+          for(let p=0; p<w*h; p++){
+            if(mask[p]){
+              fR[p] = S.R[p];
+              fG[p] = S.G[p];
+              fB[p] = S.B[p];
+            }
+          }
+        } else if (method === 'gs') {
+          fR = solveChannelGS({ mask, D: D.R, S: S.R, w, h, iters: maxIter });
+          fG = solveChannelGS({ mask, D: D.G, S: S.G, w, h, iters: maxIter });
+          fB = solveChannelGS({ mask, D: D.B, S: S.B, w, h, iters: maxIter });
+        } else { // CG
+          fR = solveChannelCG({ mask, D: D.R, S: S.R, w, h, maxIter, tol });
+          fG = solveChannelCG({ mask, D: D.G, S: S.G, w, h, maxIter, tol });
+          fB = solveChannelCG({ mask, D: D.B, S: S.B, w, h, maxIter, tol });
+        }
+        const out = compose({ mask, fR, fG, fB, w, h });
+        const t1 = performance.now();
+        ctxOut.putImageData(out, 0, 0);
+        $("btnSave").disabled = false;
+        $("status").textContent = `Done [${method.toUpperCase()}]. time=${(t1 - t0).toFixed(1)} ms (w=${w}, h=${h}, maxIter=${maxIter}, tol=${tol})`;
+      } catch (e) { console.error(e); $("status").innerHTML = '<span class="err">Error: ' + (e && e.message ? e.message : e) + '</span>'; }
+    });
+
+    $("btnSave").addEventListener('click', () => { const a = document.createElement('a'); a.download = 'seamless_clone.png'; a.href = canvas.toDataURL('image/png'); a.click(); });
+
+    // window.addEventListener('DOMContentLoaded', async () => { await loadDefaults(); if (dstID) { canvas.width = dstID.width; canvas.height = dstID.height; } $("btnRun").disabled = !(dstID && srcID && maskID); drawOverlayPreview(); });
+  </script>
+</body>
+
+</html>
