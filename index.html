@@ -1,10 +1,10 @@
 <!doctype html>
-<html lang="ja">
+<html lang="en">
 
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Seamless Clone (Poisson) – GS / CG 切替版</title>
+  <title>Seamless Clone (Poisson) </title>
   <style>
     :root {
       --bg: #0b0d10;
@@ -121,6 +121,40 @@
     .err {
       color: #fca5a5;
     }
+
+    .fileBtn {
+      display: inline-block;
+      padding: 8px 12px;
+      background: #38bdf8;
+      color: #07202a;
+      border-radius: 8px;
+      cursor: pointer;
+      font-weight: 700;
+    }
+
+    .fileBtn:hover {
+      filter: brightness(1.05);
+    }
+
+    .canvasBox {
+      width: 900px;
+      /* 表示領域固定 */
+      height: 600px;
+      /* 表示領域固定 */
+      background: #000;
+      border-radius: 10px;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    #viewer {
+      width: 100%;
+      height: 100%;
+      border-radius: 10px;
+      background: #000;
+    }
   </style>
 </head>
 
@@ -131,12 +165,31 @@
 
       <h2>Inputs</h2>
       <!-- <div class="hint">初期状態で <code>data/destination.png</code> / <code>data/source.png</code> / <code>data/mask.png</code> を読み込みます（同ディレクトリに <code>data/</code> を配置）。</div> -->
-      <label>Destination (背景)</label>
+      <label class="fileBtn">
+        Destination (Background)
+        <input id="fileDst" type="file" accept="image/*" hidden>
+      </label>
+      <div class="hint" id="fileDstName">No file selected</div>
+
+      <label class="fileBtn">
+        Source (Paste)
+        <input id="fileSrc" type="file" accept="image/*" hidden>
+      </label>
+      <div class="hint" id="fileDstName">No file selected</div>
+
+
+      <label class="fileBtn">
+        Mask (White=Blend / Black=Outside)
+        <input id="fileMask" type="file" accept="image/*" hidden>
+      </label>
+      <div class="hint" id="fileDstName">No file selected</div>
+
+      <!-- <label>Destination (Background)</label>
       <input id="fileDst" type="file" accept="image/*" />
-      <label>Source (貼り付け)</label>
+      <label>Source (Paste)</label>
       <input id="fileSrc" type="file" accept="image/*" />
-      <label>Mask (白=ブレンド / 黒=外)</label>
-      <input id="fileMask" type="file" accept="image/*" />
+      <label>Mask (White=Blend / Black=Outside)</label>
+      <input id="fileMask" type="file" accept="image/*" /> -->
 
       <div class="thumbs" style="margin-top:8px;">
         <div class="box">
@@ -153,16 +206,16 @@
       <h2>Placement</h2>
       <div class="grid2">
         <div>
-          <label>topx <span class="hint">(右+ / 左−)</span></label>
+          <label>topx <span class="hint">(R+ / L−)</span></label>
           <input id="topx" type="number" value="-35" step="1" class="mono" />
         </div>
         <div>
-          <label>topy <span class="hint">(下+ / 上−)</span></label>
+          <label>topy <span class="hint">(D+ / U−)</span></label>
           <input id="topy" type="number" value="35" step="1" class="mono" />
         </div>
       </div>
       <div class="row" style="margin-top:6px;">
-        <input id="showOverlay" type="checkbox" checked /> <span class="hint">プレビューにマスク(赤)を重ねる</span>
+        <input id="showOverlay" type="checkbox" checked /> <span class="hint">Overlay mask (red) on preview</span>
       </div>
 
       <h2>Solver</h2>
@@ -202,21 +255,62 @@
 
     <div class="panel">
       <h2>Preview / Result</h2>
-      <canvas id="canvas" width="0" height="0"></canvas>
-      <p class="hint">Run 前は Destination 上に Source と Mask(赤) を (topx, topy) で重ねて表示。Run 後はブレンド結果を表示します。</p>
+
+      <div class="canvasBox">
+        <canvas id="viewer" width="900" height="600"></canvas>
+      </div>
+
+      <!-- 計算用（dst解像度）。表示しない -->
+      <canvas id="canvas" width="0" height="0" style="display:none;"></canvas>
+
+      <p class="hint">Before running, overlays Source and Mask (red) on Destination at (topx, topy). After running,
+        displays the blended result.</p>
     </div>
   </div>
 
   <script>
     // ===== Utilities =====
     const $ = (id) => document.getElementById(id);
-    const canvas = $("canvas");
+    const canvas = $("canvas");          // 計算用（display:none）
     const ctxOut = canvas.getContext('2d');
+
+    const viewer = $("viewer");          // 表示用（固定サイズ）
+    const vctx = viewer.getContext('2d');
     const cPrevDst = $("prevDst").getContext('2d');
     const cPrevSrc = $("prevSrc").getContext('2d');
     const cPrevMask = $("prevMask").getContext('2d');
 
     let dstID = null, srcID = null, maskID = null; // ImageData
+
+
+    function renderToViewer() {
+      const vw = viewer.width, vh = viewer.height;
+      const cw = canvas.width, ch = canvas.height;
+      if (!cw || !ch) return;
+
+      // viewer をクリア
+      vctx.setTransform(1, 0, 0, 1, 0, 0);
+      vctx.clearRect(0, 0, vw, vh);
+
+      // contain（縦横比維持で収める）
+      const s = Math.min(vw / cw, vh / ch);
+      const dw = cw * s, dh = ch * s;
+      const ox = (vw - dw) * 0.5;
+      const oy = (vh - dh) * 0.5;
+
+      vctx.imageSmoothingEnabled = true; // 縮小表示を綺麗に
+      vctx.drawImage(canvas, ox, oy, dw, dh);
+    }
+
+    const fileDst = document.getElementById('fileDst');
+    const fileDstName = document.getElementById('fileDstName');
+
+    fileDst.addEventListener('change', () => {
+      fileDstName.textContent = fileDst.files.length
+        ? fileDst.files[0].name
+        : 'No file selected';
+    });
+
 
     function loadImageURL(url) {
       return new Promise((resolve, reject) => {
@@ -360,11 +454,14 @@
     // ===== Compose & Preview =====
     function compose({ mask, fR, fG, fB, w, h }) { const out = ctxOut.createImageData(w, h); for (let p = 0, i = 0; p < w * h; p++, i += 4) { if (mask[p]) { out.data[i] = Math.max(0, Math.min(255, fR[p])); out.data[i + 1] = Math.max(0, Math.min(255, fG[p])); out.data[i + 2] = Math.max(0, Math.min(255, fB[p])); out.data[i + 3] = 255; } else { const di = p * 4; out.data[di] = dstID.data[di]; out.data[di + 1] = dstID.data[di + 1]; out.data[di + 2] = dstID.data[di + 2]; out.data[di + 3] = 255; } } return out; }
 
-    function drawOverlayPreview() { if (!dstID) { return; } const topx = parseInt($("topx").value || '0', 10), topy = parseInt($("topy").value || '0', 10); ctxOut.canvas.width = dstID.width; ctxOut.canvas.height = dstID.height; ctxOut.putImageData(dstID, 0, 0); if (srcID) { ctxOut.save(); ctxOut.globalAlpha = 0.75; ctxOut.drawImage(imageDataToCanvas(srcID), topx, topy); ctxOut.restore(); } if (maskID && $("showOverlay").checked) { const mc = imageDataToCanvas(maskID); ctxOut.save(); ctxOut.globalAlpha = 0.35; ctxOut.drawImage(mc, topx, topy); ctxOut.globalAlpha = 0.35; ctxOut.globalCompositeOperation = 'multiply'; ctxOut.fillStyle = 'red'; ctxOut.drawImage(mc, topx, topy); ctxOut.restore(); } }
+    function drawOverlayPreview() {
+      if (!dstID) { return; } const topx = parseInt($("topx").value || '0', 10), topy = parseInt($("topy").value || '0', 10); ctxOut.setTransform(1, 0, 0, 1, 0, 0);
+      + ctxOut.clearRect(0, 0, canvas.width, canvas.height); ctxOut.putImageData(dstID, 0, 0); if (srcID) { ctxOut.save(); ctxOut.globalAlpha = 0.75; ctxOut.drawImage(imageDataToCanvas(srcID), topx, topy); ctxOut.restore(); } if (maskID && $("showOverlay").checked) { const mc = imageDataToCanvas(maskID); ctxOut.save(); ctxOut.globalAlpha = 0.35; ctxOut.drawImage(mc, topx, topy); ctxOut.globalAlpha = 0.35; ctxOut.globalCompositeOperation = 'multiply'; ctxOut.fillStyle = 'red'; ctxOut.drawImage(mc, topx, topy); ctxOut.restore(); renderToViewer(); }
+    }
 
     // ===== File handling & boot =====
-    async function loadDefaults() { try { const d = await loadImageURL('data/destination.png'); const s = await loadImageURL('data/source.png'); const m = await loadImageURL('data/mask.png'); dstID = imageToImageData(d); srcID = imageToImageData(s); maskID = imageToImageData(m); setupAfterLoad(); } catch (e) { $("status").textContent = 'デフォルト画像の読み込みに失敗: ' + e.message + '（手動で選択してください）'; } }
-    async function handleFiles() { try { const df = $("fileDst").files[0]; const sf = $("fileSrc").files[0]; const mf = $("fileMask").files[0]; let changed = false; if (df) { const d = await loadImageFile(df); dstID = imageToImageData(d); changed = true; } if (sf) { const s = await loadImageFile(sf); srcID = imageToImageData(s); changed = true; } if (mf) { const m = await loadImageFile(mf); maskID = imageToImageData(m); changed = true; } if (!dstID) { $("btnRun").disabled = true; $("btnSave").disabled = true; $("status").textContent = 'Destination を選択してください'; return; } if (changed) { canvas.width = dstID.width; canvas.height = dstID.height; refreshThumb(cPrevDst, dstID); refreshThumb(cPrevSrc, srcID); refreshThumb(cPrevMask, maskID); drawOverlayPreview(); } $("btnRun").disabled = !(dstID && srcID && maskID); $("btnSave").disabled = true; const msg = []; if (dstID) msg.push(`dst ${dstID.width}×${dstID.height}`); if (srcID) msg.push(`src ${srcID.width}×${srcID.height}`); if (maskID) msg.push(`mask ${maskID.width}×${maskID.height}`); $("status").textContent = msg.join(' | '); } catch (e) { console.error(e); $("status").innerHTML = '<span class="err">ローカル画像の読み込みに失敗: ' + (e && e.message ? e.message : e) + '</span>'; } }
+    //async function loadDefaults() { try { const d = await loadImageURL('data/destination.png'); const s = await loadImageURL('data/source.png'); const m = await loadImageURL('data/mask.png'); dstID = imageToImageData(d); srcID = imageToImageData(s); maskID = imageToImageData(m); setupAfterLoad(); } catch (e) { $("status").textContent = 'デフォルト画像の読み込みに失敗: ' + e.message + '（手動で選択してください）'; } }
+    async function handleFiles() { try { const df = $("fileDst").files[0]; const sf = $("fileSrc").files[0]; const mf = $("fileMask").files[0]; let changed = false; if (df) { const d = await loadImageFile(df); dstID = imageToImageData(d); changed = true; } if (sf) { const s = await loadImageFile(sf); srcID = imageToImageData(s); changed = true; } if (mf) { const m = await loadImageFile(mf); maskID = imageToImageData(m); changed = true; } if (!dstID) { $("btnRun").disabled = true; $("btnSave").disabled = true; $("status").textContent = 'Select Destination'; return; } if (changed) { setupAfterLoad(); } $("btnRun").disabled = !(dstID && srcID && maskID); $("btnSave").disabled = true; const msg = []; if (dstID) msg.push(`dst ${dstID.width}×${dstID.height}`); if (srcID) msg.push(`src ${srcID.width}×${srcID.height}`); if (maskID) msg.push(`mask ${maskID.width}×${maskID.height}`); $("status").textContent = msg.join(' | '); } catch (e) { console.error(e); $("status").innerHTML = '<span class="err">ローカル画像の読み込みに失敗: ' + (e && e.message ? e.message : e) + '</span>'; } }
     function setupAfterLoad() { if (!dstID) return; canvas.width = dstID.width; canvas.height = dstID.height; refreshThumb(cPrevDst, dstID); refreshThumb(cPrevSrc, srcID); refreshThumb(cPrevMask, maskID); drawOverlayPreview(); $("btnRun").disabled = !(dstID && srcID && maskID); $("btnSave").disabled = true; }
 
     $("fileDst").addEventListener('change', handleFiles);
@@ -388,13 +485,13 @@
 
         const t0 = performance.now();
         let fR, fG, fB;
-        if(method==='copy'){
+        if (method === 'copy') {
           // Simple copy-paste: output = destination, but inside mask copy source pixels directly
           fR = new Float64Array(D.R);
           fG = new Float64Array(D.G);
           fB = new Float64Array(D.B);
-          for(let p=0; p<w*h; p++){
-            if(mask[p]){
+          for (let p = 0; p < w * h; p++) {
+            if (mask[p]) {
               fR[p] = S.R[p];
               fG[p] = S.G[p];
               fB[p] = S.B[p];
@@ -412,6 +509,7 @@
         const out = compose({ mask, fR, fG, fB, w, h });
         const t1 = performance.now();
         ctxOut.putImageData(out, 0, 0);
+        renderToViewer();
         $("btnSave").disabled = false;
         $("status").textContent = `Done [${method.toUpperCase()}]. time=${(t1 - t0).toFixed(1)} ms (w=${w}, h=${h}, maxIter=${maxIter}, tol=${tol})`;
       } catch (e) { console.error(e); $("status").innerHTML = '<span class="err">Error: ' + (e && e.message ? e.message : e) + '</span>'; }
