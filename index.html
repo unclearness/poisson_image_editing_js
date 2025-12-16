@@ -175,14 +175,14 @@
         Source (Paste)
         <input id="fileSrc" type="file" accept="image/*" hidden>
       </label>
-      <div class="hint" id="fileDstName">No file selected</div>
+      <div class="hint" id="fileSrcName">No file selected</div>
 
 
       <label class="fileBtn">
         Mask (White=Blend / Black=Outside)
         <input id="fileMask" type="file" accept="image/*" hidden>
       </label>
-      <div class="hint" id="fileDstName">No file selected</div>
+      <div class="hint" id="fileMaskName">No file selected</div>
 
       <!-- <label>Destination (Background)</label>
       <input id="fileDst" type="file" accept="image/*" />
@@ -304,13 +304,27 @@
 
     const fileDst = document.getElementById('fileDst');
     const fileDstName = document.getElementById('fileDstName');
-
     fileDst.addEventListener('change', () => {
       fileDstName.textContent = fileDst.files.length
         ? fileDst.files[0].name
         : 'No file selected';
     });
 
+    const fileSrc = document.getElementById('fileSrc');
+    const fileSrcName = document.getElementById('fileSrcName');
+    fileSrc.addEventListener('change', () => {
+      fileSrcName.textContent = fileSrc.files.length
+        ? fileSrc.files[0].name
+        : 'No file selected';
+    });
+
+    const fileMask = document.getElementById('fileMask');
+    const fileMaskName = document.getElementById('fileMaskName');
+    fileMask.addEventListener('change', () => {
+      fileMaskName.textContent = fileMask.files.length
+        ? fileMask.files[0].name
+        : 'No file selected';
+    });
 
     function loadImageURL(url) {
       return new Promise((resolve, reject) => {
